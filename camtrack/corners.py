@@ -87,7 +87,7 @@ def _build_impl(frame_sequence: pims.FramesSequence,
 
     n_corners = 500
     image_0 = np.uint8(frame_sequence[0] * 255)
-    corners_coordinates = cv2.goodFeaturesToTrack(image_0, n_corners, 0.001, 10).reshape(-1, 2)
+    corners_coordinates = cv2.goodFeaturesToTrack(image_0, n_corners, 0.01, 10).reshape(-1, 2)
     corners_ids = np.arange(corners_coordinates.shape[0])
     next_id = corners_coordinates.shape[0]
     corners = FrameCorners(
@@ -113,7 +113,7 @@ def _build_impl(frame_sequence: pims.FramesSequence,
         new_corners = np.array(new_corners)
 
         if new_corners.shape[0] < n_corners:
-            new_corners_2 = cv2.goodFeaturesToTrack(image_1, n_corners - new_corners.shape[0], 0.001, 10,
+            new_corners_2 = cv2.goodFeaturesToTrack(image_1, n_corners - new_corners.shape[0], 0.01, 10,
                                                     mask=np.uint8(mask_param), blockSize=10)
         if new_corners.shape[0] < n_corners and new_corners_2 is not None:
             new_corners_2 = new_corners_2.reshape((-1, 2))
