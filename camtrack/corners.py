@@ -87,13 +87,13 @@ def _build_impl(frame_sequence: pims.FramesSequence,
 
     n_corners = 500
     image_0 = np.uint8(frame_sequence[0] * 255)
-    corners_coordinates = cv2.goodFeaturesToTrack(image_0, n_corners, 0.005, 10).reshape(-1, 2)
+    corners_coordinates = cv2.goodFeaturesToTrack(image_0, n_corners, 0.001, 10).reshape(-1, 2)
     corners_ids = np.arange(corners_coordinates.shape[0])
     next_id = corners_coordinates.shape[0]
     corners = FrameCorners(
         corners_ids,
         corners_coordinates,
-        np.ones(corners_coordinates.shape[0]) * 15
+        np.ones(corners_coordinates.shape[0]) * 10
     )
     builder.set_corners_at_frame(0, corners)
     for frame, image_1 in enumerate(frame_sequence[1:], 1):
@@ -113,8 +113,10 @@ def _build_impl(frame_sequence: pims.FramesSequence,
         new_corners = np.array(new_corners)
 
         if new_corners.shape[0] < n_corners:
-            new_corners_2 = cv2.goodFeaturesToTrack(image_1, max(1, n_corners - new_corners.shape[0]), 0.01, 10,
-                                                    mask=np.uint8(mask_param), blockSize=10).reshape(-1, 2)
+            new_corners_2 = cv2.goodFeaturesToTrack(image_1, n_corners - new_corners.shape[0], 0.001, 10,
+                                                    mask=np.uint8(mask_param), blockSize=10)
+        if new_corners.shape[0] < n_corners and new_corners_2 is not None:
+            new_corners_2 = new_corners_2.reshape((-1, 2))
             new_ids_2 = np.arange(next_id, next_id + new_corners_2.shape[0])
             next_id += new_corners_2.shape[0]
             corners_coordinates = np.vstack([new_corners, new_corners_2])
