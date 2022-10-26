@@ -19,9 +19,8 @@ from typing import IO
 
 import click
 import cv2
-import numpy as np
-
 import frameseq
+import numpy as np
 
 
 class FrameCorners:
