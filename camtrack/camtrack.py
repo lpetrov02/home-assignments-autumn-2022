@@ -27,11 +27,15 @@ from _camtrack import (
 )
 
 
-def solve_pnp(intrinsic_matrix, frame_number, calculated_points, calculated_points_ids, corner_storage):
+def solve_pnp(intrinsic_matrix, frame_number, calculated_points, calculated_points_ids, corner_storage, excluded):
     frame_corners = corner_storage[frame_number]
     image_points = dict(zip(frame_corners.ids.reshape(-1), frame_corners.points))
     calc_points = dict(zip(calculated_points_ids.reshape(-1), calculated_points))
-    common_ids = np.array(list(set(calculated_points_ids.reshape(-1)) & set(frame_corners.ids.reshape(-1))))
+    common_ids_set = set(calculated_points_ids.reshape(-1)) & set(frame_corners.ids.reshape(-1)) - excluded
+    if len(common_ids_set) < 4:
+        return None, None
+
+    common_ids = list(common_ids_set)
     actual_points = []
     actual_image_points = []
     for corner_id in common_ids:
@@ -41,6 +45,7 @@ def solve_pnp(intrinsic_matrix, frame_number, calculated_points, calculated_poin
                                                      intrinsic_matrix, np.zeros(4))
     view_mat = rodrigues_and_translation_to_view_mat3x4(rvec, tvec)
     inliers_ids = np.array(common_ids)[inliers]
+    excluded |= (common_ids_set - set(inliers_ids.reshape(-1).tolist()))
 
     return view_mat, inliers_ids
 
@@ -71,7 +76,7 @@ def track_and_calc_colors(camera_parameters: CameraParameters,
                                                                             pose_to_view_mat3x4(known_view_1[1]),
                                                                             pose_to_view_mat3x4(known_view_2[1]),
                                                                             intrinsic_mat,
-                                                                            TriangulationParameters(1000, 0, 0))
+                                                                            TriangulationParameters(50, 0, 0))
 
     point_cloud_builder = PointCloudBuilder(correspondences_ids, points3d)
     print(f"First two frames processed: {known_view_1[0]} and {known_view_2[0]}")
@@ -80,10 +85,12 @@ def track_and_calc_colors(camera_parameters: CameraParameters,
     processed_frames_set = {known_view_1[0], known_view_2[0]}
 
     # NOW WE HAVE TO PROCESS ALL FRAMES OF THE VIDEO
-    shift = 20
+    shift = 32
+    min_angle = 0
     added_points_on_previous_epoch = 2
     min_common_points = 4
     direction_parameter = {"frw": {"dir": 1, "end": frame_count}, "back": {"dir": -1, "end": -1}}
+    outliers = set()
     while len(processed_frames_set) != frame_count:
         for fn in list(processed_frames_set):
             for d in direction_parameter:
@@ -95,8 +102,9 @@ def track_and_calc_colors(camera_parameters: CameraParameters,
                         continue
 
                     new_view_mat, new_inliers = solve_pnp(intrinsic_mat, new_fn, point_cloud_builder.points,
-                                                          point_cloud_builder.ids, corner_storage)
-                    # print(new_view_mat, new_inliers, "\n\n\n")
+                                                          point_cloud_builder.ids, corner_storage, outliers)
+                    if new_view_mat is None and new_inliers is None:
+                        break
                     parent_frame_view_mat = view_mats[fn]
                     new_correspondences = build_correspondences(corner_storage[fn], corner_storage[new_fn])
                     new_points3d, new_correspondences_ids, new_median_cos = \
@@ -105,21 +113,25 @@ def track_and_calc_colors(camera_parameters: CameraParameters,
                                                     new_view_mat,
                                                     intrinsic_mat,
                                                     TriangulationParameters(
-                                                        1000, 0, 0))
+                                                        50, min_angle, 0))
                     if len(new_correspondences_ids) < min_common_points:
                         break
-
-                    print(f"Processed frame: {new_fn}. Inliers: {len(new_inliers)}. "
-                          f"Point cloud size: {len(point_cloud_builder.points)}")
-                    print(f"Triangulated on this step: {len(new_points3d)}.")
-                    print(f"Frames processed: {len(processed_frames_set)} out of {frame_count} \n\n")
 
                     view_mats[new_fn] = new_view_mat
                     point_cloud_builder.add_points(new_correspondences_ids, new_points3d)
                     processed_frames_set.add(new_fn)
+
+                    print(f"Processed frame: {new_fn}. Inliers: {len(new_inliers)}. "
+                          f"Point cloud size: {len(point_cloud_builder.points)}")
+                    print(f"Triangulated on this step: {len(new_points3d)}.")
+                    print(f"Frames processed: {len(processed_frames_set)} out of {frame_count}")
+                    print(f"Total outliers: {len(outliers)}\n")
+
                     new_fn += 1 * direction_parameter[d]["dir"]
         if len(processed_frames_set) == added_points_on_previous_epoch:
             shift //= 2
+            min_angle //= 2
+        added_points_on_previous_epoch = len(processed_frames_set)
 
     calc_point_cloud_colors(
         point_cloud_builder,
