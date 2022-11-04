@@ -85,19 +85,23 @@ def track_and_calc_colors(camera_parameters: CameraParameters,
     processed_frames_set = {known_view_1[0], known_view_2[0]}
 
     # NOW WE HAVE TO PROCESS ALL FRAMES OF THE VIDEO
-    shift = 32
-    min_angle = 0
+    shift = frame_count
+    min_angle = 10
     added_points_on_previous_epoch = 2
     min_common_points = 4
     direction_parameter = {"frw": {"dir": 1, "end": frame_count}, "back": {"dir": -1, "end": -1}}
     outliers = set()
+    steps = 0
+    was_processed_on_step = [-1 for _ in range(frame_count)]
+    long_period = frame_count * 3 // 4
     while len(processed_frames_set) != frame_count:
         for fn in list(processed_frames_set):
             for d in direction_parameter:
                 new_fn = fn + shift * direction_parameter[d]["dir"]
                 while new_fn * direction_parameter[d]["dir"] < \
                         direction_parameter[d]["end"] * direction_parameter[d]["dir"]:
-                    if new_fn in processed_frames_set:
+                    if new_fn in processed_frames_set and steps - was_processed_on_step[new_fn] < long_period:
+                        # second condition: retriangulation
                         new_fn += 1 * direction_parameter[d]["dir"]
                         continue
 
@@ -121,6 +125,10 @@ def track_and_calc_colors(camera_parameters: CameraParameters,
                     point_cloud_builder.add_points(new_correspondences_ids, new_points3d)
                     processed_frames_set.add(new_fn)
 
+                    was_processed_on_step[new_fn] = steps
+                    steps += 1
+
+                    print(f"Median angle cosinus: {new_median_cos}")
                     print(f"Processed frame: {new_fn}. Inliers: {len(new_inliers)}. "
                           f"Point cloud size: {len(point_cloud_builder.points)}")
                     print(f"Triangulated on this step: {len(new_points3d)}.")
@@ -129,7 +137,7 @@ def track_and_calc_colors(camera_parameters: CameraParameters,
 
                     new_fn += 1 * direction_parameter[d]["dir"]
         if len(processed_frames_set) == added_points_on_previous_epoch:
-            shift //= 2
+            shift = shift * 3 // 4
             min_angle //= 2
         added_points_on_previous_epoch = len(processed_frames_set)
 
