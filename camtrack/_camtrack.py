@@ -51,6 +51,19 @@ def to_opencv_camera_mat3x3(camera_parameters: CameraParameters,
                      [0.0, 0.0, 1.0]])
 
 
+def to_opencv_camera_mat4x4(camera_parameters: CameraParameters,
+                            image_height: int) -> np.ndarray:
+    # pylint:disable=invalid-name
+    h = image_height
+    w = h * camera_parameters.aspect_ratio
+    h_to_f = 2.0 * np.tan(camera_parameters.fov_y / 2.0)
+    f = h / h_to_f
+    return np.array([[f, 0.0, w / 2.0, 0.0],
+                     [0.0, f, h / 2.0, 0.0],
+                     [0.0, 0.0, 0.0, 1.0],
+                     [0.0, 0.0, 1.0, 0.0]])
+
+
 _IDENTITY_POSE_MAT = np.hstack(
     (np.eye(3, 3, dtype=np.float32),
      np.zeros((3, 1), dtype=np.float32))

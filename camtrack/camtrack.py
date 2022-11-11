@@ -8,6 +8,7 @@ from typing import List, Optional, Tuple
 
 import cv2
 import numpy as np
+import sortednp as snp
 from queue import PriorityQueue
 
 from corners import CornerStorage
@@ -23,6 +24,7 @@ from _camtrack import (
     rodrigues_and_translation_to_view_mat3x4,
     triangulate_correspondences,
     to_opencv_camera_mat3x3,
+    to_opencv_camera_mat4x4,
     view_mat3x4_to_pose
 )
 
@@ -50,6 +52,42 @@ def solve_pnp(intrinsic_matrix, frame_number, calculated_points, calculated_poin
     return view_mat, inliers_ids
 
 
+def rmat_and_tvec_to_mat4x4(rmat, tvec):
+    mat = np.eye(4)
+    mat[:3, :3] = rmat
+    mat[:3, 3] = tvec
+    return mat
+
+
+def build_extended_correspondences(corners_list):
+    ids = None
+    for corners in corners_list:
+        ids = ids & set(corners.ids.reshape(-1).tolist()) if ids is not None else set(corners.ids.reshape(-1).tolist())
+    return np.array(list(ids)), \
+           [
+               corners_list[i].points[np.in1d(corners_list[i].ids.reshape(-1), list(ids))]
+               for i in range(len(corners_list))
+           ]
+
+
+def triangulate_n_points(points2d, camera_poses, proj_mat):
+    """
+    points2d:
+    [[(x11, y11), (x12, y12)],  - точки для первого кадра
+     [(x21, y21), (x22, y22)]]  - точки для второго кадра
+    """
+    points = np.array(points2d)
+    P = [proj_mat @ np.linalg.inv(rmat_and_tvec_to_mat4x4(camera_pose[:, :3], camera_pose[:, 3]))
+         for camera_pose in camera_poses]
+    res_points = []
+    for i in range(len(points[0])):
+        A = np.vstack([[P[j][3, :] * points[j, i, 0] - P[j][0, :], P[j][3, :] * points[j, i, 1] - P[j][1, :]]
+                       for j in range(len(points))])
+        X = np.linalg.lstsq(A[:, :3] / A[:, 3].reshape(-1, 1), np.zeros(A.shape[0]), rcond=0)
+        res_points.append(X[0])
+    return np.array(res_points)
+
+
 def track_and_calc_colors(camera_parameters: CameraParameters,
                           corner_storage: CornerStorage,
                           frame_sequence_path: str,
@@ -63,6 +101,10 @@ def track_and_calc_colors(camera_parameters: CameraParameters,
 
     rgb_sequence = frameseq.read_rgb_f32(frame_sequence_path)
     intrinsic_mat = to_opencv_camera_mat3x3(
+        camera_parameters,
+        rgb_sequence[0].shape[0]
+    )
+    proj_mat = to_opencv_camera_mat4x4(
         camera_parameters,
         rgb_sequence[0].shape[0]
     )
@@ -96,12 +138,39 @@ def track_and_calc_colors(camera_parameters: CameraParameters,
     long_period = frame_count * 3 // 4
     while len(processed_frames_set) != frame_count:
         for fn in list(processed_frames_set):
+            # re-triangulation block
+            if fn in processed_frames_set and steps - was_processed_on_step[fn] > long_period:
+                new_correspondences_n = 0
+                left_shift, right_shift = fn, frame_count - fn - 1
+                new_correspondences_ids, new_correspondences_points = None, None
+                while new_correspondences_n < 5 and left_shift * right_shift > 0:
+                    new_correspondences_ids, new_correspondences_points = build_extended_correspondences(
+                        [corner_storage[fn - left_shift],
+                         corner_storage[fn],
+                         corner_storage[fn + right_shift]]
+                    )
+                    new_correspondences_n = len(new_correspondences_ids)
+                    if new_correspondences_n < 5:
+                        left_shift, right_shift = left_shift * 9 // 10, right_shift * 9 // 10
+                if new_correspondences_n >= 5:
+                    new_points3d = triangulate_n_points(new_correspondences_points,
+                                                        [
+                                                            view_mats[fn],
+                                                            view_mats[fn - left_shift],
+                                                            view_mats[fn + right_shift]
+                                                        ],
+                                                        proj_mat)
+                    point_cloud_builder.add_points(new_correspondences_ids, new_points3d)
+                    was_processed_on_step[fn] = steps
+                    print(f"Frame {fn} was re-triangulated")
+            # end of re-triangulation block
+
             for d in direction_parameter:
                 new_fn = fn + shift * direction_parameter[d]["dir"]
                 while new_fn * direction_parameter[d]["dir"] < \
                         direction_parameter[d]["end"] * direction_parameter[d]["dir"]:
-                    if new_fn in processed_frames_set and steps - was_processed_on_step[new_fn] < long_period:
-                        # second condition: retriangulation
+
+                    if new_fn in processed_frames_set:
                         new_fn += 1 * direction_parameter[d]["dir"]
                         continue
 
