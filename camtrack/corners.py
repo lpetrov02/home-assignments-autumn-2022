@@ -85,9 +85,9 @@ def _build_impl(frame_sequence: pims.FramesSequence,
         winSize=(25, 25), maxLevel=5, criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03)
     )
 
-    n_corners = 500
+    n_corners = 1000
     image_0 = np.uint8(frame_sequence[0] * 255)
-    corners_coordinates = cv2.goodFeaturesToTrack(image_0, n_corners, 0.01, 10).reshape(-1, 2)
+    corners_coordinates = cv2.goodFeaturesToTrack(image_0, n_corners, 0.005, 10).reshape(-1, 2)
     corners_ids = np.arange(corners_coordinates.shape[0])
     next_id = corners_coordinates.shape[0]
     corners = FrameCorners(

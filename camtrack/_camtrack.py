@@ -230,6 +230,7 @@ def triangulate_correspondences(correspondences: Correspondences,
         _calc_z_mask(points3d, view_mat_1, parameters.min_depth),
         _calc_z_mask(points3d, view_mat_2, parameters.min_depth)
     )
+
     angle_mask, median_cos = _calc_triangulation_angle_mask(
         view_mat_1,
         view_mat_2,

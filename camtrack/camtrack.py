@@ -83,7 +83,7 @@ def triangulate_n_points(points2d, camera_poses, proj_mat):
     for i in range(len(points[0])):
         A = np.vstack([[P[j][3, :] * points[j, i, 0] - P[j][0, :], P[j][3, :] * points[j, i, 1] - P[j][1, :]]
                        for j in range(len(points))])
-        X = np.linalg.lstsq(A[:, :3] / A[:, 3].reshape(-1, 1), np.zeros(A.shape[0]), rcond=0)
+        X = np.linalg.lstsq(A[:, :3] / A[:, 3].reshape(-1, 1), -np.ones(A.shape[0]), rcond=0)
         res_points.append(X[0])
     return np.array(res_points)
 
@@ -130,7 +130,7 @@ def track_and_calc_colors(camera_parameters: CameraParameters,
     shift = frame_count
     min_angle = 10
     added_points_on_previous_epoch = 2
-    min_common_points = 4
+    min_common_points = 2
     direction_parameter = {"frw": {"dir": 1, "end": frame_count}, "back": {"dir": -1, "end": -1}}
     outliers = set()
     steps = 0
@@ -160,7 +160,7 @@ def track_and_calc_colors(camera_parameters: CameraParameters,
                                                             view_mats[fn + right_shift]
                                                         ],
                                                         proj_mat)
-                    point_cloud_builder.add_points(new_correspondences_ids, new_points3d)
+                    # point_cloud_builder.add_points(new_correspondences_ids, new_points3d)
                     was_processed_on_step[fn] = steps
                     print(f"Frame {fn} was re-triangulated")
             # end of re-triangulation block
@@ -169,15 +169,17 @@ def track_and_calc_colors(camera_parameters: CameraParameters,
                 new_fn = fn + shift * direction_parameter[d]["dir"]
                 while new_fn * direction_parameter[d]["dir"] < \
                         direction_parameter[d]["end"] * direction_parameter[d]["dir"]:
-
                     if new_fn in processed_frames_set:
                         new_fn += 1 * direction_parameter[d]["dir"]
                         continue
 
                     new_view_mat, new_inliers = solve_pnp(intrinsic_mat, new_fn, point_cloud_builder.points,
                                                           point_cloud_builder.ids, corner_storage, outliers)
+
                     if new_view_mat is None and new_inliers is None:
+                        print(f"Fail for frame {new_fn}")
                         break
+
                     parent_frame_view_mat = view_mats[fn]
                     new_correspondences = build_correspondences(corner_storage[fn], corner_storage[new_fn])
                     new_points3d, new_correspondences_ids, new_median_cos = \
