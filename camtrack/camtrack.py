@@ -88,6 +88,52 @@ def triangulate_n_points(points2d, camera_poses, proj_mat):
     return np.array(res_points)
 
 
+def initialize_(corners_1, corners_2, K):
+    ids_1 = corners_1.ids.flatten()
+    ids_2 = corners_2.ids.flatten()
+    _, (indices_1, indices_2) = snp.intersect(ids_1, ids_2, indices=True)
+    points_1 = corners_1.points[indices_1].reshape(-1, 2)
+    points_2 = corners_2.points[indices_2].reshape(-1, 2)
+
+    if points_1.shape[0] < 5:
+        return False, None, None, None, None
+
+    E_base, mask_base = cv2.findEssentialMat(points_1, points_2, K, method=cv2.RANSAC)
+    H, mask_homo = cv2.findHomography(points_1, points_2, method=cv2.RANSAC)
+
+    if mask_base.mean() > mask_homo.mean():
+        retval, R, t, mask, _ = cv2.recoverPose(
+            E_base, points1=points_1, points2=points_2, cameraMatrix=K, distanceThresh=50
+        )
+        return True, R, t, mask_base, mask_base.mean()
+    return False, None, None, None, None
+
+
+def initialize(intrinsic_mat, corner_storage, min_inliers=100):
+    best_inliers_count = 0
+    best_res = {"R": None, "t": None, "n": None}
+
+    fc = len(corner_storage)
+    d = fc // 2
+    while d > 10:
+        f1, f2 = 0, d - 1
+        while f2 < fc:
+            res, R, t, mask, inliers_count =\
+                initialize_(corner_storage[f1], corner_storage[f2], intrinsic_mat)
+            if not res:
+                f1, f2 = f2, f2 + d
+                continue
+            if inliers_count >= best_inliers_count:
+                best_res["R"], best_res["t"] = R, t.flatten()
+                best_res["n"] = (f1, f2)
+                best_inliers_count = inliers_count
+            if best_inliers_count >= min_inliers:
+                return best_res
+            f1, f2 = f2, f2 + d
+        d = d * 9 // 10
+    return best_res
+
+
 def track_and_calc_colors(camera_parameters: CameraParameters,
                           corner_storage: CornerStorage,
                           frame_sequence_path: str,
@@ -111,20 +157,40 @@ def track_and_calc_colors(camera_parameters: CameraParameters,
 
     frame_count = len(corner_storage)
     view_mats = [None] * frame_count
-    view_mats[known_view_1[0]] = pose_to_view_mat3x4(known_view_1[1])
-    view_mats[known_view_2[0]] = pose_to_view_mat3x4(known_view_2[1])
-    correspondences = build_correspondences(corner_storage[known_view_1[0]], corner_storage[known_view_2[0]])
-    points3d, correspondences_ids, median_cos = triangulate_correspondences(correspondences,
-                                                                            pose_to_view_mat3x4(known_view_1[1]),
-                                                                            pose_to_view_mat3x4(known_view_2[1]),
-                                                                            intrinsic_mat,
-                                                                            TriangulationParameters(50, 0, 0))
+    # view_mats[known_view_1[0]] = pose_to_view_mat3x4(known_view_1[1])
+    # view_mats[known_view_2[0]] = pose_to_view_mat3x4(known_view_2[1])
+    # correspondences = build_correspondences(corner_storage[known_view_1[0]], corner_storage[known_view_2[0]])
+    # points3d, correspondences_ids, median_cos =\
+    #     triangulate_correspondences(
+    #         correspondences,
+    #         pose_to_view_mat3x4(known_view_1[1]),
+    #         pose_to_view_mat3x4(known_view_2[1]),
+    #         intrinsic_mat,
+    #         TriangulationParameters(50, 0, 0)
+    #     )
+    #
+    # point_cloud_builder = PointCloudBuilder(correspondences_ids, points3d)
+    # print(f"First two frames processed: {known_view_1[0]} and {known_view_2[0]}")
+    # print(f"3D points on the 1st step: {len(points3d)}, point cloud size: {len(points3d)}")
+
+    view = initialize(intrinsic_mat, corner_storage)
+    view_mats[view["n"][0]] = pose_to_view_mat3x4(Pose(np.eye(3), -np.zeros(3)))
+    view_mats[view["n"][1]] = pose_to_view_mat3x4(Pose(view["R"], -view["R"] @ view["t"]))
+    correspondences = build_correspondences(corner_storage[view["n"][0]], corner_storage[view["n"][1]])
+    points3d, correspondences_ids, median_cos =\
+        triangulate_correspondences(
+            correspondences,
+            pose_to_view_mat3x4(Pose(np.eye(3), -np.zeros(3))),
+            pose_to_view_mat3x4(Pose(view["R"], -view["R"] @ view["t"])),
+            intrinsic_mat,
+            TriangulationParameters(50, 0, 0)
+        )
 
     point_cloud_builder = PointCloudBuilder(correspondences_ids, points3d)
-    print(f"First two frames processed: {known_view_1[0]} and {known_view_2[0]}")
+    print(f"First two frames processed: {view['n'][0]} and {view['n'][1]}")
     print(f"3D points on the 1st step: {len(points3d)}, point cloud size: {len(points3d)}")
 
-    processed_frames_set = {known_view_1[0], known_view_2[0]}
+    processed_frames_set = {view["n"][0], view["n"][1]}
 
     # NOW WE HAVE TO PROCESS ALL FRAMES OF THE VIDEO
     shift = frame_count
@@ -139,30 +205,30 @@ def track_and_calc_colors(camera_parameters: CameraParameters,
     while len(processed_frames_set) != frame_count:
         for fn in list(processed_frames_set):
             # re-triangulation block
-            if fn in processed_frames_set and steps - was_processed_on_step[fn] > long_period:
-                new_correspondences_n = 0
-                left_shift, right_shift = fn, frame_count - fn - 1
-                new_correspondences_ids, new_correspondences_points = None, None
-                while new_correspondences_n < 5 and left_shift * right_shift > 0:
-                    new_correspondences_ids, new_correspondences_points = build_extended_correspondences(
-                        [corner_storage[fn - left_shift],
-                         corner_storage[fn],
-                         corner_storage[fn + right_shift]]
-                    )
-                    new_correspondences_n = len(new_correspondences_ids)
-                    if new_correspondences_n < 5:
-                        left_shift, right_shift = left_shift * 9 // 10, right_shift * 9 // 10
-                if new_correspondences_n >= 5:
-                    new_points3d = triangulate_n_points(new_correspondences_points,
-                                                        [
-                                                            view_mats[fn],
-                                                            view_mats[fn - left_shift],
-                                                            view_mats[fn + right_shift]
-                                                        ],
-                                                        proj_mat)
-                    # point_cloud_builder.add_points(new_correspondences_ids, new_points3d)
-                    was_processed_on_step[fn] = steps
-                    print(f"Frame {fn} was re-triangulated")
+            # if fn in processed_frames_set and steps - was_processed_on_step[fn] > long_period:
+            #     new_correspondences_n = 0
+            #     left_shift, right_shift = fn, frame_count - fn - 1
+            #     new_correspondences_ids, new_correspondences_points = None, None
+            #     while new_correspondences_n < 5 and left_shift * right_shift > 0:
+            #         new_correspondences_ids, new_correspondences_points = build_extended_correspondences(
+            #             [corner_storage[fn - left_shift],
+            #              corner_storage[fn],
+            #              corner_storage[fn + right_shift]]
+            #         )
+            #         new_correspondences_n = len(new_correspondences_ids)
+            #         if new_correspondences_n < 5:
+            #             left_shift, right_shift = left_shift * 9 // 10, right_shift * 9 // 10
+            #     if new_correspondences_n >= 5:
+            #         new_points3d = triangulate_n_points(new_correspondences_points,
+            #                                             [
+            #                                                 view_mats[fn],
+            #                                                 view_mats[fn - left_shift],
+            #                                                 view_mats[fn + right_shift]
+            #                                             ],
+            #                                             proj_mat)
+            #         # point_cloud_builder.add_points(new_correspondences_ids, new_points3d)
+            #         was_processed_on_step[fn] = steps
+            #         print(f"Frame {fn} was re-triangulated")
             # end of re-triangulation block
 
             for d in direction_parameter:
