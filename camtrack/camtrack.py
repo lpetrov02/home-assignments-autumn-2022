@@ -109,9 +109,9 @@ def initialize_prim(corners_1, corners_2, K):
     return False, None, None, None, None, None
 
 
-def initialize(intrinsic_mat, corner_storage, min_inliers_part=(1.0 - 1e-6), min_inliers_count=10):
+def initialize(intrinsic_mat, corner_storage, min_inliers_part=(1.0 - 1e-6), min_inliers_count=5):
     best_inliers_part = 0.0
-    best_res = {"R": None, "t": None, "n": None}
+    best_res = {"R": np.eye(3), "t": np.zeros(3), "n": (0, 1)}
 
     fc = len(corner_storage)
     d = fc // 4
