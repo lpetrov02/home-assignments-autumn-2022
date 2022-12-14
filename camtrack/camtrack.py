@@ -109,12 +109,42 @@ def initialize_prim(corners_1, corners_2, K):
     return False, None, None, None, None, None
 
 
+def initialize(intrinsic_mat, corner_storage, min_inliers_count=5, good_inliers_count=950):
+    best_res = {"R": np.eye(3), "t": np.zeros(3), "n": (0, 1)}
+    best_inliers_count = 0
+
+    fc = len(corner_storage)
+    f1 = fc // 2 - min(fc // 10, 10)
+    f2 = fc // 2 + min(fc // 10, 10)
+
+    while f2 - f1 > 0:
+        res, R, t, mask, inliers_part, inliers_count =\
+            initialize_prim(corner_storage[f1], corner_storage[f2], intrinsic_mat)
+        print(f1, f2, inliers_count)
+        if res and inliers_count >= min_inliers_count:
+            if inliers_count > best_inliers_count:
+                best_res["R"], best_res["t"] = R, t.flatten()
+                best_res["n"] = (f1, f2)
+                best_inliers_count = inliers_count
+            if inliers_count > good_inliers_count:
+                print(f1, f2)
+            return best_res
+        if abs(fc // 2 - f1) > abs(fc // 2 - f2):
+            f1 += 1
+        else:
+            f2 -= 1
+        continue
+    return best_res
+
+
+'''
 def initialize(intrinsic_mat, corner_storage, min_inliers_part=(1.0 - 1e-6), min_inliers_count=5):
     best_inliers_part = 0.0
     best_res = {"R": np.eye(3), "t": np.zeros(3), "n": (0, 1)}
+    best_inliers_count = 0
 
     fc = len(corner_storage)
-    d = fc // 4
+    d = max(fc // 5, 20)
     while d > 10:
         f1, f2 = 0, d - 1
         while f2 < fc:
@@ -123,15 +153,16 @@ def initialize(intrinsic_mat, corner_storage, min_inliers_part=(1.0 - 1e-6), min
             if not res:
                 f1, f2 = f2, f2 + d
                 continue
-            if inliers_part >= best_inliers_part and inliers_count >= min_inliers_count:
+            if inliers_count >= max(best_inliers_count, min_inliers_count):
                 best_res["R"], best_res["t"] = R, t.flatten()
                 best_res["n"] = (f1, f2)
-                best_inliers_part = inliers_part
-            if best_inliers_part >= min_inliers_part:
-                return best_res
+                best_inliers_count = inliers_count
             f1, f2 = f1 + max(1, fc // 100), f2 + max(1, fc // 100)
-        d = d * 9 // 10
+        if best_inliers_count > 10:
+            return best_res
+        d = d * 4 // 5
     return best_res
+'''
 
 
 def track_and_calc_colors(camera_parameters: CameraParameters,
