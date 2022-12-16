@@ -109,60 +109,60 @@ def initialize_prim(corners_1, corners_2, K):
     return False, None, None, None, None, None
 
 
-def initialize(intrinsic_mat, corner_storage, min_inliers_count=5, good_inliers_count=950):
+def initialize_short(intrinsic_mat, corner_storage, min_inliers_count=4, good_inliers_count=500):
     best_res = {"R": np.eye(3), "t": np.zeros(3), "n": (0, 1)}
     best_inliers_count = 0
 
     fc = len(corner_storage)
-    f1 = fc // 2 - min(fc // 10, 10)
-    f2 = fc // 2 + min(fc // 10, 10)
+    centers = [fc // 2]
 
-    while f2 - f1 > 0:
-        res, R, t, mask, inliers_part, inliers_count =\
-            initialize_prim(corner_storage[f1], corner_storage[f2], intrinsic_mat)
-        print(f1, f2, inliers_count)
-        if res and inliers_count >= min_inliers_count:
-            if inliers_count > best_inliers_count:
-                best_res["R"], best_res["t"] = R, t.flatten()
-                best_res["n"] = (f1, f2)
-                best_inliers_count = inliers_count
-            if inliers_count > good_inliers_count:
-                print(f1, f2)
-            return best_res
-        if abs(fc // 2 - f1) > abs(fc // 2 - f2):
-            f1 += 1
-        else:
-            f2 -= 1
-        continue
+    for center in centers:
+        f1 = center // 2 - min(fc // 4, 10)
+        f2 = center // 2 + min(fc // 4, 10)
+
+        while f2 - f1 > 0:
+            res, R, t, mask, inliers_part, inliers_count =\
+                initialize_prim(corner_storage[f1], corner_storage[f2], intrinsic_mat)
+            print(f1, f2, inliers_count)
+            if res and inliers_count >= min_inliers_count:
+                if inliers_count > best_inliers_count:
+                    best_res["R"], best_res["t"] = R, t.flatten()
+                    best_res["n"] = (f1, f2)
+                    best_inliers_count = inliers_count
+                if inliers_count > good_inliers_count:
+                    break
+            if abs(center - f1) > abs(center - f2):
+                f1 += 1
+            else:
+                f2 -= 1
+            continue
     return best_res
 
 
-'''
-def initialize(intrinsic_mat, corner_storage, min_inliers_part=(1.0 - 1e-6), min_inliers_count=5):
-    best_inliers_part = 0.0
+def initialize_long(intrinsic_mat, corner_storage, min_inliers_count=4, good_inliers_count=500):
     best_res = {"R": np.eye(3), "t": np.zeros(3), "n": (0, 1)}
     best_inliers_count = 0
 
     fc = len(corner_storage)
-    d = max(fc // 5, 20)
-    while d > 10:
+    d = fc // 4
+    while d > 0:
         f1, f2 = 0, d - 1
         while f2 < fc:
             res, R, t, mask, inliers_part, inliers_count =\
                 initialize_prim(corner_storage[f1], corner_storage[f2], intrinsic_mat)
             if not res:
-                f1, f2 = f2, f2 + d
+                f1, f2 = f1 + d // 2, f2 + d // 2
                 continue
-            if inliers_count >= max(best_inliers_count, min_inliers_count):
-                best_res["R"], best_res["t"] = R, t.flatten()
-                best_res["n"] = (f1, f2)
-                best_inliers_count = inliers_count
-            f1, f2 = f1 + max(1, fc // 100), f2 + max(1, fc // 100)
-        if best_inliers_count > 10:
-            return best_res
-        d = d * 4 // 5
+            if inliers_count >= min_inliers_count:
+                if inliers_count > best_inliers_count:
+                    best_res["R"], best_res["t"] = R, t.flatten()
+                    best_res["n"] = (f1, f2)
+                    best_inliers_count = inliers_count
+            if inliers_count > good_inliers_count:
+                return best_res
+            f1, f2 = f1 + d // 2, f2 + d // 2
+        d = d * 9 // 10
     return best_res
-'''
 
 
 def track_and_calc_colors(camera_parameters: CameraParameters,
@@ -204,15 +204,18 @@ def track_and_calc_colors(camera_parameters: CameraParameters,
     # print(f"First two frames processed: {known_view_1[0]} and {known_view_2[0]}")
     # print(f"3D points on the 1st step: {len(points3d)}, point cloud size: {len(points3d)}")
 
-    view = initialize(intrinsic_mat, corner_storage)
+    if frame_count >= 400:
+        view = initialize_long(intrinsic_mat, corner_storage)
+    else:
+        view = initialize_short(intrinsic_mat, corner_storage)
     view_mats[view["n"][0]] = pose_to_view_mat3x4(Pose(np.eye(3), -np.zeros(3)))
-    view_mats[view["n"][1]] = pose_to_view_mat3x4(Pose(view["R"], -view["R"] @ view["t"]))
+    view_mats[view["n"][1]] = pose_to_view_mat3x4(Pose(np.linalg.inv(view["R"]), -view["R"] @ view["t"]))
     correspondences = build_correspondences(corner_storage[view["n"][0]], corner_storage[view["n"][1]])
     points3d, correspondences_ids, median_cos =\
         triangulate_correspondences(
             correspondences,
-            pose_to_view_mat3x4(Pose(np.eye(3), -np.zeros(3))),
-            pose_to_view_mat3x4(Pose(view["R"], -view["R"] @ view["t"])),
+            view_mats[view["n"][0]],  # pose_to_view_mat3x4(Pose(np.eye(3), -np.zeros(3))),
+            view_mats[view["n"][1]],  # pose_to_view_mat3x4(Pose(view["R"], -view["R"] @ view["t"])),
             intrinsic_mat,
             TriangulationParameters(50, 0, 0)
         )
@@ -234,6 +237,7 @@ def track_and_calc_colors(camera_parameters: CameraParameters,
     was_processed_on_step = [-1 for _ in range(frame_count)]
     long_period = frame_count * 3 // 4
     while len(processed_frames_set) != frame_count:
+        print(shift)
         for fn in list(processed_frames_set):
             # re-triangulation block
             try:
@@ -277,7 +281,6 @@ def track_and_calc_colors(camera_parameters: CameraParameters,
                                                           point_cloud_builder.ids, corner_storage, outliers)
 
                     if new_view_mat is None and new_inliers is None:
-                        print(f"Fail for frame {new_fn}")
                         break
 
                     parent_frame_view_mat = view_mats[fn]
