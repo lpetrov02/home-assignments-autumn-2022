@@ -86,7 +86,7 @@ def triangulate_n_points(points2d, camera_poses, proj_mat):
     for i in range(len(points[0])):
         A = np.vstack([[P[j][3, :] * points[j, i, 0] - P[j][0, :], P[j][3, :] * points[j, i, 1] - P[j][1, :]]
                        for j in range(len(points))])
-        X = np.linalg.lstsq(A[:, :3] / A[:, 3].reshape(-1, 1), -np.ones(A.shape[0], 1), rcond=0)
+        X = np.linalg.lstsq(A[:, :3], -A[:, 3].reshape(-1, 1), rcond=0)
         res_points.append(X[0])
     return np.array(res_points)
 
@@ -112,99 +112,105 @@ def initialize_prim(corners_1, corners_2, K):
     return False, None, None, None, None, None
 
 
-def initialize_short(intrinsic_mat, corner_storage, min_inliers_count=6):
+def initialize_simple(intrinsic_mat, corner_storage, min_inliers_count=6, good_inliers_count=500):
     best_res = {"R": np.eye(3), "t": np.zeros(3), "n": (0, 1)}
-    success = False
-
-    best_inliers_count, good_inliers_count = 0, 500
-    best_inliers_part, good_inliers_part = 0.0, 0.8
-    min_angle = 30
+    best_inliers_count = 0
 
     fc = len(corner_storage)
     centers = [fc // 2]
 
-    while True:
-        for center in centers:
-            f1 = center // 2 - min(fc // 4, 10)
-            f2 = center // 2 + min(fc // 4, 10)
+    for center in centers:
+        f1 = center - min(fc // 4, 10)
+        f2 = center + min(fc // 4, 10)
 
-            while f2 - f1 > 0:
-                res, R, t, mask, inliers_part, inliers_count =\
-                    initialize_prim(corner_storage[f1], corner_storage[f2], intrinsic_mat)
-
-                correspondences = build_correspondences(corner_storage[f1], corner_storage[f2])
-                points3d, correspondences_ids, median_cos = \
-                    triangulate_correspondences(
-                        correspondences,
-                        pose_to_view_mat3x4(Pose(np.eye(3), -np.zeros(3))),
-                        pose_to_view_mat3x4(Pose(np.linalg.inv(R), -R @ t)),
-                        intrinsic_mat,
-                        TriangulationParameters(50, 0, 0)
-                    )
-                if median_cos < np.cos(min_angle / 180 * np.pi):
-                    if res and inliers_count >= min_inliers_count:
-                        if inliers_part > best_inliers_part:
-                            best_res["R"], best_res["t"] = R, t.flatten()
-                            best_res["n"] = (f1, f2)
-                            best_inliers_part = inliers_part
-                            success = True
-                            if inliers_count > good_inliers_count:
-                                break
-                if abs(center - f1) > abs(center - f2):
-                    f1 += 1
-                else:
-                    f2 -= 1
-        if success or min_angle == 0:
-            break
-        else:
-            min_angle -= 5
+        while f2 - f1 > 0:
+            res, R, t, mask, inliers_part, inliers_count =\
+                initialize_prim(corner_storage[f1], corner_storage[f2], intrinsic_mat)
+            print(f1, f2, inliers_count)
+            if res and inliers_count >= min_inliers_count:
+                if inliers_count > best_inliers_count:
+                    best_res["R"], best_res["t"] = R, t.flatten()
+                    best_res["n"] = (f1, f2)
+                    best_inliers_count = inliers_count
+                if inliers_count > good_inliers_count:
+                    break
+            if abs(center - f1) > abs(center - f2):
+                f1 += 1
+            else:
+                f2 -= 1
+            continue
     return best_res
 
 
-def initialize_long(intrinsic_mat, corner_storage, min_inliers_count=6, good_inliers_count=500):
+def initialize_short(intrinsic_mat, corner_storage, min_inliers_count=6):
     best_res = {"R": np.eye(3), "t": np.zeros(3), "n": (0, 1)}
+
+    best_inliers_count, good_inliers_count = 0, 200
+    best_inliers_part, good_inliers_part = 0.0, 0.85
+    best_cos = 1
     success = False
 
-    best_inliers_count, good_inliers_count = 0, 500
-    best_inliers_part, good_inliers_part = 0.0, 0.8
-    min_angle = 30
-
     fc = len(corner_storage)
-    while True:
-        d = fc // 4
-        while d > 0:
-            f1, f2 = 0, d - 1
-            while f2 < fc:
-                res, R, t, mask, inliers_part, inliers_count =\
-                    initialize_prim(corner_storage[f1], corner_storage[f2], intrinsic_mat)
-                if not res:
-                    f1, f2 = f1 + d // 2, f2 + d // 2
-                    continue
+    centers = [fc // 2, fc * 2 // 5, fc // 3]
 
+    d1, d2 = min(10, fc // 5), min(10, fc // 5)
+    while d1 > 0 or d2 > 0:
+        for center in centers:
+            f1, f2 = center - d1, center + d2
+            res, R, t, mask, inliers_part, inliers_count =\
+                initialize_prim(corner_storage[f1], corner_storage[f2], intrinsic_mat)
+
+            if res and inliers_count >= min_inliers_count:
                 correspondences = build_correspondences(corner_storage[f1], corner_storage[f2])
-                points3d, correspondences_ids, median_cos = \
-                    triangulate_correspondences(
+                _, _, median_cos = triangulate_correspondences(
                         correspondences,
                         pose_to_view_mat3x4(Pose(np.eye(3), -np.zeros(3))),
                         pose_to_view_mat3x4(Pose(np.linalg.inv(R), -R @ t)),
                         intrinsic_mat,
                         TriangulationParameters(50, 0, 0)
                     )
-                if median_cos >= np.cos(min_angle / 180 * np.pi):
-                    if inliers_count >= min_inliers_count:
-                        if inliers_part > best_inliers_part:
-                            best_res["R"], best_res["t"] = R, t.flatten()
-                            best_res["n"] = (f1, f2)
-                            best_inliers_part = inliers_part
-                            success = True
-                        if inliers_count > good_inliers_count:
-                            return best_res
-                f1, f2 = f1 + d // 2, f2 + d // 2
-            d = d * 4 // 5
-        if success or min_angle == 0:
-            break
+                if inliers_count >= good_inliers_count and inliers_part >= good_inliers_part and\
+                        abs(median_cos) < best_cos:
+                    best_res["R"], best_res["t"] = R, t.flatten()
+                    best_res["n"] = (f1, f2)
+                    best_cos = abs(median_cos)
+                    success = True
+        if success:
+            return best_res
+        if d1 < d2:
+            d2 -= 1
         else:
-            min_angle -= 5
+            d1 -= 1
+    return best_res
+
+
+def initialize_long(intrinsic_mat, corner_storage, min_inliers_count=6, step=None):
+    best_res = {"R": np.eye(3), "t": np.zeros(3), "n": (0, 1)}
+
+    best_inliers_count, good_inliers_count = 0, 500
+    best_inliers_part, good_inliers_part = 0.0, 0.8
+
+    fc = len(corner_storage)
+    d = step or fc // 4
+    while d > 0:
+        f1, f2 = 0, d - 1
+        while f2 < fc:
+            res, R, t, mask, inliers_part, inliers_count =\
+                initialize_prim(corner_storage[f1], corner_storage[f2], intrinsic_mat)
+            if not res:
+                f1, f2 = f1 + d // 2, f2 + d // 2
+                continue
+
+            if inliers_count >= min_inliers_count:
+                if inliers_part > best_inliers_part:
+                    best_res["R"], best_res["t"] = R, t.flatten()
+                    best_res["n"] = (f1, f2)
+                    best_inliers_part = inliers_part
+                    success = True
+                if inliers_count > good_inliers_count:
+                    return best_res
+            f1, f2 = f1 + d // 2, f2 + d // 2
+        d = d * 4 // 5
     return best_res
 
 
@@ -214,6 +220,8 @@ def track_and_calc_colors(camera_parameters: CameraParameters,
                           known_view_1: Optional[Tuple[int, Pose]] = None,
                           known_view_2: Optional[Tuple[int, Pose]] = None) \
         -> Tuple[List[Pose], PointCloud]:
+    print("Started!")
+
     if known_view_1 is not None and known_view_2 is not None and known_view_1[0] > known_view_2[0]:
         known_view_1, known_view_2 = known_view_2, known_view_1
 
@@ -244,13 +252,16 @@ def track_and_calc_colors(camera_parameters: CameraParameters,
             )
 
         point_cloud_builder = PointCloudBuilder(correspondences_ids, points3d)
-        print(f"First two frames processed: {known_view_1[0]} and {known_view_2[0]}")
+        print(f"First two frames processed (no init): {known_view_1[0]} and {known_view_2[0]}")
         print(f"3D points on the 1st step: {len(points3d)}, point cloud size: {len(points3d)}")
         processed_frames_set = {known_view_1[0], known_view_2[0]}
     else:
         if frame_count >= 400:
             print("'Long' init case")
             view = initialize_long(intrinsic_mat, corner_storage)
+        elif frame_count <= 90:
+            print("'Simple' init case")
+            view = initialize_simple(intrinsic_mat, corner_storage)
         else:
             print("'Short' init case")
             view = initialize_short(intrinsic_mat, corner_storage)
@@ -357,9 +368,22 @@ def track_and_calc_colors(camera_parameters: CameraParameters,
 
                     new_fn += 1 * direction_parameter[d]["dir"]
         if len(processed_frames_set) == added_points_on_previous_epoch:
+            if shift == 0:
+                break
             shift = shift * 3 // 4
             min_angle = min_angle * 3 // 4
         added_points_on_previous_epoch = len(processed_frames_set)
+
+    last_seen = None
+    if view_mats[0] is None:
+        for i in range(1, len(view_mats)):
+            if view_mats[i] is not None:
+                last_seen = view_mats[i]
+    for i in range(len(view_mats)):
+        if view_mats[i] is not None:
+            last_seen = view_mats[i]
+        else:
+            view_mats[i] = last_seen.copy()
 
     calc_point_cloud_colors(
         point_cloud_builder,

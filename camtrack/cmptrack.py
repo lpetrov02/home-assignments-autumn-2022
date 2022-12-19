@@ -53,6 +53,7 @@ def calc_track_length(t_vecs: np.ndarray) -> float:
 
 def calc_translation_errors(ground_truth_t_vecs: np.ndarray,
                             estimate_t_vecs: np.ndarray) -> np.ndarray:
+    print(estimate_t_vecs.reshape((-1, 1)).shape, ground_truth_t_vecs.flatten().shape)
     scale, _, _, _ = np.linalg.lstsq(
         estimate_t_vecs.reshape((-1, 1)),
         ground_truth_t_vecs.flatten(),

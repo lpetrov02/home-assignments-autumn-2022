@@ -437,9 +437,9 @@ def create_cli(track_and_calc_colors):
                   help='show frame sequence with drawn keypoint errors')
     @click.option('camera_poses_file', '--camera-poses', type=click.File('r'),
                   help='file containing known camera poses')
-    @click.option('--frame-1', default=0, type=click.IntRange(0),
+    @click.option('--frame-1', default=None, type=click.IntRange(0),
                   help=frame_1_help)
-    @click.option('--frame-2', default=1, type=click.IntRange(0),
+    @click.option('--frame-2', default=None, type=click.IntRange(0),
                   help=frame_2_help)
     def cli(frame_sequence, camera, track_destination, point_cloud_destination,
             file_to_load_corners, show, camera_poses_file, frame_1, frame_2):
@@ -456,7 +456,7 @@ def create_cli(track_and_calc_colors):
         else:
             corner_storage = build(sequence)
 
-        if camera_poses_file is not None:
+        if camera_poses_file is not None and frame_1 is not None and frame_2 is not None:
             known_camera_poses = read_poses(camera_poses_file)
             known_view_1 = frame_1, known_camera_poses[frame_1]
             known_view_2 = frame_2, known_camera_poses[frame_2]
