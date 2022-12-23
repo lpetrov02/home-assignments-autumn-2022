@@ -265,6 +265,7 @@ def track_and_calc_colors(camera_parameters: CameraParameters,
         else:
             print("'Short' init case")
             view = initialize_short(intrinsic_mat, corner_storage)
+        # view = initialize_short(intrinsic_mat, corner_storage)
         view_mats[view["n"][0]] = pose_to_view_mat3x4(Pose(np.eye(3), -np.zeros(3)))
         view_mats[view["n"][1]] = pose_to_view_mat3x4(Pose(np.linalg.inv(view["R"]), -view["R"] @ view["t"]))
         correspondences = build_correspondences(corner_storage[view["n"][0]], corner_storage[view["n"][1]])
